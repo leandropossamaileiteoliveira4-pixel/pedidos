@@ -1,0 +1,411 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  Receipt, 
+  Home, 
+  History, 
+  BarChart3, 
+  Settings, 
+  Plus, 
+  Minus, 
+  Trash2, 
+  CheckCircle2, 
+  Info, 
+  Calendar, 
+  Trophy, 
+  TrendingUp, 
+  X, 
+  ChevronRight,
+  Banknote
+} from 'lucide-react';
+
+const STORAGE_KEY = '@pedidos_gorjetas_v2';
+
+const DEFAULT_SETTINGS = {
+  price15: 1.5,
+  price25: 2.5,
+  confirmClose: true,
+};
+
+function pad(n) { return String(n).padStart(2, '0'); }
+function isoDate(date = new Date()) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : dateStr;
+}
+function formatMoney(val) {
+  const num = Number(val);
+  const valid = isNaN(num) ? 0 : num;
+  return `${valid.toFixed(2).replace('.', ',')} €`;
+}
+function monthKey(dateStr) { return dateStr ? dateStr.slice(0, 7) : ''; }
+function monthName(m) {
+  const names = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  return names[m - 1] || '';
+}
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState('home');
+  const [orders15, setOrders15] = useState(0);
+  const [orders25, setOrders25] = useState(0);
+  const [tips, setTips] = useState(0);
+  const [tipInput, setTipInput] = useState('');
+  const [history, setHistory] = useState({});
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [price15Input, setPrice15Input] = useState('1,50');
+  const [price25Input, setPrice25Input] = useState('2,50');
+
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        setOrders15(Number(data.orders15) || 0);
+        setOrders25(Number(data.orders25) || 0);
+        setTips(Number(data.tips) || 0);
+        setHistory(data.history || {});
+        const st = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+        setSettings(st);
+        setPrice15Input(Number(st.price15).toFixed(2).replace('.', ','));
+        setPrice25Input(Number(st.price25).toFixed(2).replace('.', ','));
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      orders15, orders25, tips, history, settings
+    }));
+  }, [orders15, orders25, tips, history, settings]);
+
+  const dayTotal = useMemo(() => {
+    return (orders15 * settings.price15) + (orders25 * settings.price25) + tips;
+  }, [orders15, orders25, tips, settings]);
+
+  const orderTotal = useMemo(() => {
+    return (orders15 * settings.price15) + (orders25 * settings.price25);
+  }, [orders15, orders25, settings]);
+
+  const historyArray = useMemo(() => {
+    return Object.keys(history)
+      .sort((a, b) => b.localeCompare(a))
+      .map(date => ({ date, ...history[date] }));
+  }, [history]);
+
+  const currentMonth = monthKey(isoDate());
+  const monthDays = useMemo(() => historyArray.filter(i => monthKey(i.date) === currentMonth), [historyArray, currentMonth]);
+  const monthClosedTotal = monthDays.reduce((acc, i) => acc + Number(i.total || 0), 0);
+  const monthTips = monthDays.reduce((acc, i) => acc + Number(i.tips || 0), 0);
+  const monthOrders = monthDays.reduce((acc, i) => acc + Number(i.orders15 || 0) + Number(i.orders25 || 0), 0);
+  const monthOrders15 = monthDays.reduce((acc, i) => acc + Number(i.orders15 || 0), 0);
+  const monthOrders25 = monthDays.reduce((acc, i) => acc + Number(i.orders25 || 0), 0);
+  const monthWorkingDays = monthDays.length;
+  const monthAverage = monthWorkingDays > 0 ? monthClosedTotal / monthWorkingDays : 0;
+
+  const bestDay = useMemo(() => {
+    if (monthDays.length === 0) return null;
+    return monthDays.reduce((best, item) => (!best || Number(item.total || 0) > Number(best.total || 0)) ? item : best, null);
+  }, [monthDays]);
+
+  function addTip() {
+    const val = Number(tipInput.replace(',', '.').trim());
+    if (isNaN(val) || val <= 0) return alert('Digite um valor de gorjeta válido.');
+    setTips(prev => prev + val);
+    setTipInput('');
+  }
+
+  function finalizeDay() {
+    const today = isoDate();
+    const existing = history[today];
+    const dayData = {
+      orders15: Number(existing?.orders15 || 0) + orders15,
+      orders25: Number(existing?.orders25 || 0) + orders25,
+      tips: Number(existing?.tips || 0) + tips,
+      total: Number(existing?.total || 0) + dayTotal,
+      closedAt: new Date().toISOString()
+    };
+    setHistory(prev => ({ ...prev, [today]: dayData }));
+    setOrders15(0);
+    setOrders25(0);
+    setTips(0);
+    setTipInput('');
+    alert(`Dia fechado! Total salvo: ${formatMoney(dayData.total)}`);
+  }
+
+  function closeDay() {
+    if (dayTotal <= 0) return alert('Registre pelo menos um pedido ou gorjeta antes de fechar.');
+    if (settings.confirmClose) {
+      if (confirm(`O total de hoje é ${formatMoney(dayTotal)}.\nDeseja fechar o dia e salvar no histórico?`)) {
+        finalizeDay();
+      }
+    } else {
+      finalizeDay();
+    }
+  }
+
+  function savePrices() {
+    const p15 = Number(price15Input.replace(',', '.'));
+    const p25 = Number(price25Input.replace(',', '.'));
+    if (isNaN(p15) || isNaN(p25) || p15 <= 0 || p25 <= 0) return alert('Valores inválidos!');
+    setSettings(prev => ({ ...prev, price15: p15, price25: p25 }));
+    alert('Configurações salvas!');
+  }
+
+  function clearAllData() {
+    if (confirm('Tem certeza que deseja apagar TODOS os dados? Esta ação não pode ser desfeita.')) {
+      setOrders15(0); setOrders25(0); setTips(0); setHistory({});
+      setSettings(DEFAULT_SETTINGS);
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }
+
+  return (
+    <div className="max-w-md mx-auto h-screen flex flex-col bg-[#F7F9F8] text-[#18221D] font-sans">
+      <header className="bg-[#19A463] text-white p-5 flex justify-between items-center shadow-sm">
+        <div>
+          <h1 className="text-xl font-extrabold tracking-tight">Pedidos & Gorjetas</h1>
+          <p className="text-xs text-[#DDF5E9] mt-0.5">Controle do seu dia</p>
+        </div>
+        <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+          <Receipt className="w-5 h-5 text-white" />
+        </div>
+      </header>
+
+      <main className="flex-1 overflow-y-auto p-4 pb-24">
+        {activeTab === 'home' && (
+          <div className="space-y-4">
+            <div className="bg-[#087A45] rounded-2xl p-5 text-white shadow-md">
+              <span className="text-[10px] font-bold text-[#BFEBD5] tracking-widest uppercase">Total de Hoje</span>
+              <div className="text-4xl font-black mt-1">{formatMoney(dayTotal)}</div>
+              <div className="h-px bg-white/20 my-4" />
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <div className="text-[10px] font-bold text-[#BFEBD5]">PEDIDOS</div>
+                  <div className="text-base font-extrabold mt-1">{orders15 + orders25}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-[#BFEBD5]">GORJETAS</div>
+                  <div className="text-base font-extrabold mt-1">{formatMoney(tips)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-[#BFEBD5]">PEDIDOS €</div>
+                  <div className="text-base font-extrabold mt-1">{formatMoney(orderTotal)}</div>
+                </div>
+              </div>
+            </div>
+
+            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wider pt-2">Registrar Pedidos</h2>
+            
+            {[
+              { title: 'Pedido de €1,50', price: settings.price15, val: orders15, add: () => setOrders15(v => v + 1), rem: () => setOrders15(v => Math.max(0, v - 1)) },
+              { title: 'Pedido de €2,50', price: settings.price25, val: orders25, add: () => setOrders25(v => v + 1), rem: () => setOrders25(v => Math.max(0, v - 1)) }
+            ].map((card, idx) => (
+              <div key={idx} className="bg-white border border-[#E4E8E6] rounded-xl p-4 flex items-center justify-between shadow-sm">
+                <div>
+                  <div className="font-bold text-sm">{card.title}</div>
+                  <div className="text-xs text-gray-500">{formatMoney(card.price)}</div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button onClick={card.rem} className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-700 active:scale-95"><Minus className="w-4 h-4" /></button>
+                  <span className="w-6 text-center font-bold text-lg">{card.val}</span>
+                  <button onClick={card.add} className="w-9 h-9 rounded-lg bg-[#19A463] flex items-center justify-center text-white active:scale-95"><Plus className="w-4 h-4" /></button>
+                </div>
+              </div>
+            ))}
+
+            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wider pt-2">Gorjetas</h2>
+
+            <div className="bg-white border border-[#E4E8E6] rounded-xl p-4 space-y-3 shadow-sm">
+              <div className="flex items-center gap-2">
+                <Banknote className="w-5 h-5 text-[#19A463]" />
+                <input 
+                  type="text" 
+                  placeholder="Ex.: 2,00" 
+                  value={tipInput} 
+                  onChange={e => setTipInput(e.target.value)}
+                  className="flex-1 border-none outline-none text-base font-semibold px-2"
+                />
+                <button onClick={addTip} className="w-9 h-9 rounded-lg bg-[#19A463] text-white flex items-center justify-center active:scale-95"><Plus className="w-5 h-5" /></button>
+              </div>
+              <div className="pt-3 border-t border-gray-100 flex justify-between items-center text-sm">
+                <span className="text-gray-500">Total em gorjetas</span>
+                <span className="font-extrabold text-base">{formatMoney(tips)}</span>
+              </div>
+              {tips > 0 && (
+                <button onClick={() => setTips(0)} className="text-xs font-bold text-red-500 hover:underline pt-1">Zerar gorjetas do dia</button>
+              )}
+            </div>
+
+            <button onClick={closeDay} className="w-full bg-[#19A463] hover:bg-[#158a53] text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-98 transition">
+              <CheckCircle2 className="w-5 h-5" /> Fechar dia
+            </button>
+
+            <div className="bg-[#E9F8F0] text-[#36634d] p-3 rounded-xl flex gap-2.5 text-xs items-start">
+              <Info className="w-4 h-4 text-[#19A463] shrink-0 mt-0.5" />
+              <span>Ao fechar o dia, os valores são guardados automaticamente no histórico.</span>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'history' && (
+          <div className="space-y-3">
+            <div className="bg-[#E9F8F0] p-4 rounded-xl border border-[#d2f0e0]">
+              <span className="text-[10px] font-bold text-[#087A45] uppercase">Dias Registrados</span>
+              <div className="text-2xl font-black text-gray-800">{historyArray.length}</div>
+            </div>
+
+            {historyArray.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <Calendar className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                <p className="font-bold text-sm">Nenhum dia registrado</p>
+              </div>
+            ) : (
+              historyArray.map(item => (
+                <div key={item.date} onClick={() => setSelectedDay(item.date)} className="bg-white border border-[#E4E8E6] p-3 rounded-xl flex items-center justify-between cursor-pointer hover:bg-gray-50 active:scale-99 transition shadow-sm">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-[#E9F8F0] w-12 h-12 rounded-lg flex flex-col items-center justify-center text-[#087A45]">
+                      <span className="text-base font-black leading-none">{item.date.split('-')[2]}</span>
+                      <span className="text-[9px] font-bold uppercase">{monthName(Number(item.date.split('-')[1])).slice(0, 3)}</span>
+                    </div>
+                    <div>
+                      <div className="font-bold text-sm text-gray-800">{formatDate(item.date)}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {Number(item.orders15 || 0) + Number(item.orders25 || 0)} pedidos · Gorjetas {formatMoney(item.tips)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="font-black text-[#087A45]">{formatMoney(item.total)}</span>
+                    <ChevronRight className="w-4 h-4 text-gray-400" />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {activeTab === 'month' && (
+          <div className="space-y-4">
+            <div className="bg-[#087A45] rounded-2xl p-5 text-white shadow-md">
+              <span className="text-[10px] font-bold text-[#BFEBD5] tracking-widest uppercase">Total do Mês</span>
+              <div className="text-4xl font-black mt-1">{formatMoney(monthClosedTotal)}</div>
+              <div className="text-xs text-[#DDF5E9] mt-2">{monthWorkingDays} {monthWorkingDays === 1 ? 'dia trabalhado' : 'dias trabalhados'}</div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="bg-white border border-[#E4E8E6] p-3.5 rounded-xl shadow-sm">
+                <TrendingUp className="w-4 h-4 text-[#19A463] mb-1" />
+                <div className="text-[10px] font-bold text-gray-400 uppercase">Média / Dia</div>
+                <div className="text-base font-extrabold mt-0.5">{formatMoney(monthAverage)}</div>
+              </div>
+              <div className="bg-white border border-[#E4E8E6] p-3.5 rounded-xl shadow-sm">
+                <Banknote className="w-4 h-4 text-[#19A463] mb-1" />
+                <div className="text-[10px] font-bold text-gray-400 uppercase">Gorjetas</div>
+                <div className="text-base font-extrabold mt-0.5">{formatMoney(monthTips)}</div>
+              </div>
+            </div>
+
+            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wider pt-1">Melhor Dia</h2>
+            {bestDay ? (
+              <div className="bg-white border border-[#E4E8E6] p-4 rounded-xl flex items-center justify-between shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#E9F8F0] flex items-center justify-center text-[#19A463]">
+                    <Trophy className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-sm">{formatDate(bestDay.date)}</div>
+                    <div className="text-xs text-gray-500">{Number(bestDay.orders15 || 0) + Number(bestDay.orders25 || 0)} pedidos</div>
+                  </div>
+                </div>
+                <div className="font-black text-[#087A45] text-base">{formatMoney(bestDay.total)}</div>
+              </div>
+            ) : (
+              <div className="bg-white border border-[#E4E8E6] p-4 rounded-xl text-xs text-gray-500 text-center">Nenhum registro este mês.</div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'settings' && (
+          <div className="space-y-4">
+            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wider">Valores Padrão</h2>
+            <div className="bg-white border border-[#E4E8E6] p-4 rounded-xl space-y-3 shadow-sm">
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-bold">Pedido €1,50</span>
+                <input type="text" value={price15Input} onChange={e => setPrice15Input(e.target.value)} className="w-20 border border-gray-200 rounded-lg p-1.5 text-center font-bold text-sm bg-gray-50" />
+              </div>
+              <div className="h-px bg-gray-100" />
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-bold">Pedido €2,50</span>
+                <input type="text" value={price25Input} onChange={e => setPrice25Input(e.target.value)} className="w-20 border border-gray-200 rounded-lg p-1.5 text-center font-bold text-sm bg-gray-50" />
+              </div>
+              <button onClick={savePrices} className="w-full bg-[#19A463] text-white font-bold py-2.5 rounded-lg text-sm mt-2">Salvar Preços</button>
+            </div>
+
+            <h2 className="text-sm font-bold text-red-600 uppercase tracking-wider pt-2">Zona de Perigo</h2>
+            <div className="bg-red-50 border border-red-100 p-4 rounded-xl flex items-center justify-between">
+              <div>
+                <div className="font-bold text-xs text-red-900">Apagar todos os dados</div>
+                <div className="text-[10px] text-red-600">Histórico e dados salvos serão removidos.</div>
+              </div>
+              <button onClick={clearAllData} className="border border-red-500 text-red-600 font-bold text-xs px-3 py-1.5 rounded-lg bg-white active:scale-95">Apagar</button>
+            </div>
+          </div>
+        )}
+      </main>
+
+      <nav className="fixed bottom-0 max-w-md w-full bg-white border-t border-[#E4E8E6] flex justify-around py-2.5 z-10">
+        {[
+          { id: 'home', label: 'Início', icon: Home },
+          { id: 'history', label: 'Histórico', icon: History },
+          { id: 'month', label: 'Mês', icon: BarChart3 },
+          { id: 'settings', label: 'Config.', icon: Settings },
+        ].map(tab => {
+          const Icon = tab.icon;
+          const active = activeTab === tab.id;
+          return (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1 ${active ? 'text-[#19A463]' : 'text-gray-400'}`}>
+              <Icon className="w-5 h-5" />
+              <span className={`text-[10px] ${active ? 'font-extrabold' : 'font-medium'}`}>{tab.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {selectedDay && history[selectedDay] && (
+        <div className="fixed inset-0 bg-black/40 flex items-end justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-md rounded-t-2xl p-5 space-y-4 animate-in slide-in-from-bottom">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-xl font-black">Detalhes do Dia</h3>
+                <p className="text-xs text-gray-500">{formatDate(selectedDay)}</p>
+              </div>
+              <button onClick={() => setSelectedDay(null)} className="p-1 bg-gray-100 rounded-lg"><X className="w-5 h-5 text-gray-500" /></button>
+            </div>
+            <div className="bg-[#087A45] text-white p-4 rounded-xl">
+              <div className="text-[10px] font-bold text-[#BFEBD5]">TOTAL DO DIA</div>
+              <div className="text-3xl font-black">{formatMoney(history[selectedDay].total)}</div>
+            </div>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between py-2 border-b border-gray-100"><span className="text-gray-500">Pedidos de €1,50</span><span className="font-bold">{history[selectedDay].orders15 || 0}</span></div>
+              <div className="flex justify-between py-2 border-b border-gray-100"><span className="text-gray-500">Pedidos de €2,50</span><span className="font-bold">{history[selectedDay].orders25 || 0}</span></div>
+              <div className="flex justify-between py-2 border-b border-gray-100"><span className="text-gray-500">Gorjetas</span><span className="font-bold">{formatMoney(history[selectedDay].tips)}</span></div>
+            </div>
+            <button onClick={() => {
+              const newHist = { ...history };
+              delete newHist[selectedDay];
+              setHistory(newHist);
+              setSelectedDay(null);
+            }} className="w-full bg-red-50 text-red-600 font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 border border-red-100">
+              <Trash2 className="w-4 h-4" /> Apagar este dia
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
